@@ -1,0 +1,219 @@
+// ===== Code.gs — Google Apps Script untuk Ucapan / RSVP =====
+// Spreadsheet : https://docs.google.com/spreadsheets/d/1XMCpLk3xml4_6PjpTfji5M8jtpGOsXAx-jutoy1Hnwc/edit
+// Sheet       : Sheet1
+// Kolom       : Timestamp | Nama Tamu | Ucapan | Konfirmasi Kehadiran | Jumlah Tamu
+//
+// Cara deploy:
+// 1. Buka spreadsheet > Extensions > Apps Script.
+// 2. Hapus isi Code.gs, tempel seluruh kode ini, lalu Save.
+// 3. Deploy > New deployment > Web app
+//      - Execute as      : Me
+//      - Who has access  : Anyone
+// 4. Copy URL yang berakhiran /exec, tempel ke rsvp-sheet.js:
+//      const RSVP_SHEET_URL = "https://script.google.com/macros/s/XXXX/exec";
+// 5. Opsional: jalankan setupSheet() sekali untuk merapikan header & lebar kolom.
+
+const SPREADSHEET_ID = "1XMCpLk3xml4_6PjpTfji5M8jtpGOsXAx-jutoy1Hnwc";
+const SHEET_NAME = "Sheet1";
+const HEADERS = ["Timestamp", "Nama Tamu", "Ucapan", "Konfirmasi Kehadiran", "Jumlah Tamu"];
+const MAX_NAMA = 80;
+const MAX_UCAPAN = 1000;
+const MAX_TAMU = 10;
+
+// GET  ?action=list  -> daftar ucapan (terbaru di atas)
+// GET  ?action=ping  -> cek koneksi
+function doGet(e) {
+  try {
+    const action = String((e && e.parameter && e.parameter.action) || "list").toLowerCase();
+    if (action === "ping") return json_({ ok: true, ping: true });
+
+    const sh = getSheet_();
+    ensureHeader_(sh);
+
+    const lastRow = sh.getLastRow();
+    const data = [];
+    if (lastRow > 1) {
+      const rows = sh.getRange(2, 1, lastRow - 1, HEADERS.length).getValues();
+      for (let i = 0; i < rows.length; i++) {
+        const r = rows[i];
+        const nama = String(r[1] || "").trim();
+        if (!nama) continue;
+        data.push({
+          timestamp: timestampToIso_(r[0]),
+          nama: nama,
+          ucapan: String(r[2] || "").trim(),
+          kehadiran: kehadiranKeKode_(r[3]),
+          tamu: String(r[4] == null ? "" : r[4]).trim()
+        });
+      }
+    }
+
+    data.reverse(); // terbaru di atas
+    return json_({ ok: true, count: data.length, data: data });
+  } catch (err) {
+    return json_({ ok: false, error: errorMessage_(err) });
+  }
+}
+
+// POST body JSON: { nama, ucapan, kehadiran: "present"|"notpresent", tamu, timestamp }
+function doPost(e) {
+  const lock = LockService.getScriptLock();
+  try {
+    lock.waitLock(10000);
+
+    const body = parseBody_(e);
+    const nama = cleanNama_(body.nama);
+    const ucapan = cleanUcapan_(body.ucapan);
+    const kode = kehadiranKeKode_(body.kehadiran);
+
+    if (nama.length < 2) return json_({ ok: false, error: "Nama minimal 2 karakter." });
+    if (ucapan.length < 2) return json_({ ok: false, error: "Ucapan minimal 2 karakter." });
+    if (!kode) return json_({ ok: false, error: "Konfirmasi kehadiran wajib dipilih." });
+
+    let tamu = parseInt(body.tamu, 10);
+    if (!isFinite(tamu) || tamu < 1) tamu = 1;
+    if (tamu > MAX_TAMU) tamu = MAX_TAMU;
+
+    const waktu = parseTimestamp_(body.timestamp) || new Date();
+
+    const sh = getSheet_();
+    ensureHeader_(sh);
+
+    sh.appendRow([
+      waktu,
+      nama,
+      ucapan,
+      kode === "present" ? "Hadir" : "Tidak Hadir",
+      kode === "present" ? tamu : ""
+    ]);
+
+    return json_({
+      ok: true,
+      item: {
+        timestamp: waktu.toISOString(),
+        nama: nama,
+        ucapan: ucapan,
+        kehadiran: kode,
+        tamu: kode === "present" ? String(tamu) : ""
+      }
+    });
+  } catch (err) {
+    return json_({ ok: false, error: errorMessage_(err) });
+  } finally {
+    try { lock.releaseLock(); } catch (e) {}
+  }
+}
+
+// Jalankan sekali dari editor Apps Script (opsional).
+function setupSheet() {
+  const sh = getSheet_();
+  ensureHeader_(sh);
+  sh.getRange(1, 1, 1, HEADERS.length)
+    .setValues([HEADERS])
+    .setFontWeight("bold")
+    .setFontColor("#FFFFFF")
+    .setBackground("#B09B7B");
+  sh.setFrozenRows(1);
+  sh.getRange(1, 1, Math.max(sh.getMaxRows(), 2), 1).setNumberFormat("dd/MM/yyyy HH:mm:ss");
+  sh.setColumnWidth(1, 165);
+  sh.setColumnWidth(2, 180);
+  sh.setColumnWidth(3, 420);
+  sh.setColumnWidth(4, 180);
+  sh.setColumnWidth(5, 120);
+}
+
+// Menu otomatis saat spreadsheet dibuka (script harus terikat ke spreadsheet).
+function onOpen() {
+  try {
+    SpreadsheetApp.getUi()
+      .createMenu("RSVP")
+      .addItem("Siapkan kolom", "setupSheet")
+      .addToUi();
+  } catch (e) {}
+  try {
+    const ss = SpreadsheetApp.getActiveSpreadsheet();
+    const sh = ss && ss.getSheetByName(SHEET_NAME);
+    if (sh) ensureHeader_(sh);
+  } catch (e) {}
+}
+
+function getSheet_() {
+  const ss = SpreadsheetApp.openById(SPREADSHEET_ID);
+  let sh = ss.getSheetByName(SHEET_NAME);
+  if (!sh) sh = ss.getSheets()[0]; // fallback: tab pertama
+  if (!sh) throw new Error('Sheet "' + SHEET_NAME + '" tidak ditemukan.');
+  return sh;
+}
+
+function ensureHeader_(sh) {
+  if (sh.getLastRow() === 0) {
+    sh.getRange(1, 1, 1, HEADERS.length).setValues([HEADERS]);
+    return;
+  }
+  const row1 = sh.getRange(1, 1, 1, HEADERS.length).getValues()[0]
+    .map(function (v) { return String(v || "").toLowerCase(); });
+  const looksHeader =
+    row1[0].indexOf("timestamp") >= 0 ||
+    row1[1].indexOf("nama") >= 0 ||
+    row1[2].indexOf("ucapan") >= 0;
+  if (!looksHeader) {
+    sh.insertRowBefore(1);
+    sh.getRange(1, 1, 1, HEADERS.length).setValues([HEADERS]);
+  }
+}
+
+function parseBody_(e) {
+  if (e && e.postData && e.postData.contents) {
+    try { return JSON.parse(e.postData.contents) || {}; } catch (err) {}
+  }
+  return (e && e.parameter) || {};
+}
+
+function cleanNama_(v) {
+  return String(v == null ? "" : v)
+    .replace(/[\u0000-\u001F\u007F]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim()
+    .slice(0, MAX_NAMA);
+}
+
+function cleanUcapan_(v) {
+  return String(v == null ? "" : v)
+    .replace(/\r/g, "")
+    .replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F]/g, "")
+    .trim()
+    .slice(0, MAX_UCAPAN);
+}
+
+function parseTimestamp_(v) {
+  if (!v) return null;
+  const d = new Date(v);
+  return isNaN(d.getTime()) ? null : d;
+}
+
+function timestampToIso_(v) {
+  if (v instanceof Date) return isNaN(v.getTime()) ? "" : v.toISOString();
+  if (typeof v === "number" && isFinite(v)) {
+    return new Date(Math.round((v - 25569) * 86400 * 1000)).toISOString();
+  }
+  const s = String(v == null ? "" : v).trim();
+  if (!s) return "";
+  const d = new Date(s);
+  return isNaN(d.getTime()) ? s : d.toISOString();
+}
+
+function kehadiranKeKode_(v) {
+  const s = String(v == null ? "" : v).trim().toLowerCase();
+  if (s === "present" || s === "hadir") return "present";
+  if (s === "notpresent" || s === "tidak hadir" || s === "tidak_hadir" || s === "tidak") return "notpresent";
+  return "";
+}
+
+function json_(obj) {
+  return ContentService.createTextOutput(JSON.stringify(obj))
+    .setMimeType(ContentService.MimeType.JSON);
+}
+
+function errorMessage_(err) {
+  return String((err && err.message) || err || "Terjadi kesalahan.");
+}
