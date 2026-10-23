@@ -2085,13 +2085,13 @@
 										<div data-dce-background-color="#B09B7B"
 											class="elementor-element elementor-element-686eff4 elementor-align-center elementor-mobile-align-center animated-slow elementor-invisible elementor-widget elementor-widget-button"
 											data-id="686eff4" data-element_type="widget" data-e-type="widget"
-											id="btn_open"
+											id="btn_open" style="cursor: pointer;"
 											data-settings="{&quot;_animation&quot;:&quot;zoomIn&quot;,&quot;_animation_delay&quot;:2200}"
 											data-widget_type="button.default">
 											<div class="elementor-widget-container">
 												<div class="elementor-button-wrapper">
 													<a class="elementor-button elementor-size-sm elementor-animation-shrink"
-														role="button">
+														role="button" href="javascript:void(0)" style="cursor: pointer;">
 														<span class="elementor-button-content-wrapper">
 															<span class="elementor-button-icon">
 																<i aria-hidden="true" class="far fa-envelope-open"></i>
@@ -2691,9 +2691,10 @@
 											data-widget_type="heading.default">
 											<div class="elementor-widget-container">
 												<h2 class="elementor-heading-title elementor-size-default">
-													Mei Sandhi Tri Shilma Dhea, S.M</h2>
+													Mei Sandhi Tri Shilma Dhea, S.M<br>(Perangkat Desa Ternyang)</h2>
 											</div>
 										</div>
+
 										<div data-dce-title-color="#333333"
 											class="elementor-element elementor-element-8c62d5f inv-atas elementor-widget elementor-widget-heading"
 											data-id="8c62d5f" data-element_type="widget" data-e-type="widget"
@@ -5350,7 +5351,13 @@
 
 
 
-																					<audio id="song" loop="">
+																					<audio id="song" loop preload="auto" playsinline webkit-playsinline src="Janjisuci-yovie&nuno.mp3">
+																						<source
+																							src="Janjisuci-yovie&nuno.mp3"
+																							type="audio/mpeg">
+																						<source
+																							src="Janjisuci-yovie%26nuno.mp3"
+																							type="audio/mpeg">
 																						<source
 																							src="Janjisuci-yovie&nuno.mp3"
 																							type="audio/mp3">
@@ -5998,8 +6005,15 @@
 																								loopEndTime = null;
 																							}
 
+																							var isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+
 																							function fadeAudio(targetVolume, duration) {
-																								if (!song) return;
+																								if (!song || isIOS) {
+																									if (song) {
+																										try { song.volume = Math.max(0, Math.min(1, targetVolume)); } catch (e) { }
+																									}
+																									return;
+																								}
 																								var startVolume = Number(song.volume);
 																								if (!Number.isFinite(startVolume)) startVolume = 1;
 																								var startTime = Date.now();
@@ -6009,10 +6023,14 @@
 																									var elapsed = Date.now() - startTime;
 																									if (elapsed < duration) {
 																										var fraction = elapsed / duration;
-																										song.volume = Math.max(0, Math.min(1, startVolume + ((targetVolume - startVolume) * fraction)));
+																										try {
+																											song.volume = Math.max(0, Math.min(1, startVolume + ((targetVolume - startVolume) * fraction)));
+																										} catch (e) { }
 																										window.requestAnimationFrame(step);
 																									} else {
-																										song.volume = Math.max(0, Math.min(1, targetVolume));
+																										try {
+																											song.volume = Math.max(0, Math.min(1, targetVolume));
+																										} catch (e) { }
 																									}
 																								}
 																								window.requestAnimationFrame(step);
@@ -6026,18 +6044,29 @@
 																								}
 
 																								if (isFirstPlay) {
-																									try {
-																										song.currentTime = loopStartTime;
-																									} catch (e) { }
+																									if (loopStartTime > 0 && song.readyState >= 1) {
+																										try {
+																											song.currentTime = loopStartTime;
+																										} catch (e) { }
+																									}
 																									isFirstPlay = false;
 																								}
+
+																								try {
+																									song.muted = false;
+																								} catch (e) { }
 
 																								if (!song.paused) {
 																									audioActive();
 																									return;
 																								}
 
-																								song.volume = 0;
+																								if (!isIOS) {
+																									try { song.volume = 0; } catch (e) { }
+																								} else {
+																									try { song.volume = 1; } catch (e) { }
+																								}
+
 																								var promise;
 																								try {
 																									promise = song.play();
@@ -6048,14 +6077,20 @@
 
 																								if (promise && typeof promise.then === 'function') {
 																									promise.then(function () {
-																										fadeAudio(1, fadeDuration);
+																										if (!isIOS) {
+																											fadeAudio(1, fadeDuration);
+																										} else {
+																											try { song.volume = 1; } catch (e) { }
+																										}
 																										audioActive();
-																									}).catch(function () {
-																										// Autoplay may be blocked until #btn_open/user interaction.
+																									}).catch(function (err) {
+																										console.warn("Audio play prevented:", err);
 																										audioInactive();
 																									});
 																								} else {
-																									fadeAudio(1, fadeDuration);
+																									if (!isIOS) {
+																										fadeAudio(1, fadeDuration);
+																									}
 																									audioActive();
 																								}
 																							}
@@ -6067,7 +6102,7 @@
 																									pauseTimer = null;
 																								}
 
-																								if (immediate) {
+																								if (immediate || isIOS) {
 																									try { song.pause(); } catch (e) { }
 																									audioInactive();
 																									return;
@@ -6102,6 +6137,25 @@
 																								jQuery('#btn_open').off('click.amsAudio').on('click.amsAudio', nativePlayAudio);
 																								jQuery('#mute-sound .elementor-icon').off('click.amsAudio').on('click.amsAudio', function () {
 																									if (!song.paused) toggleNativeAudio();
+																								});
+																							}
+
+																							var unmuteBtn = document.querySelector('#unmute-sound .elementor-icon');
+																							if (unmuteBtn) {
+																								['click', 'touchend'].forEach(function (ev) {
+																									unmuteBtn.addEventListener(ev, function (e) {
+																										e.preventDefault();
+																										toggleNativeAudio();
+																									});
+																								});
+																							}
+																							var muteBtn = document.querySelector('#mute-sound .elementor-icon');
+																							if (muteBtn) {
+																								['click', 'touchend'].forEach(function (ev) {
+																									muteBtn.addEventListener(ev, function (e) {
+																										e.preventDefault();
+																										if (!song.paused) toggleNativeAudio();
+																									});
 																								});
 																							}
 
@@ -6279,11 +6333,35 @@
 													if (typeof elementorFrontendConfig === 'undefined') {
 														disableScrolling();
 														document.body.style.height = "100vh";
-														btn_open.onclick = function () {
+														function triggerOpenInvitation() {
 															enableScrolling();
 															closeCover();
-															myFunction(); if (typeof window.playAudio === 'function') { window.playAudio(); }
-														};
+															myFunction();
+															window.__amsAudioOpened = true;
+															var s = document.getElementById('song');
+															if (s) {
+																s.muted = false;
+																try { s.volume = 1; } catch (e) { }
+																var p = s.play();
+																if (p && typeof p.then === 'function') {
+																	p.then(function () {
+																		if (typeof window.audioActive === 'function') window.audioActive();
+																	}).catch(function (err) {
+																		console.warn("Direct play failed, fallback to playAudio:", err);
+																		if (typeof window.playAudio === 'function') { window.playAudio(); }
+																	});
+																}
+															} else if (typeof window.playAudio === 'function') {
+																window.playAudio();
+															}
+														}
+														btn_open.onclick = triggerOpenInvitation;
+														btn_open.addEventListener('touchend', function (e) {
+															if (!btn_open.__openedTriggered) {
+																btn_open.__openedTriggered = true;
+																triggerOpenInvitation();
+															}
+														}, { passive: true });
 
 													}
 
